@@ -1749,7 +1749,7 @@ class SolutionEvaluator(object):
 
     def eval_pr_t_q_max(self):
         '''
-        pr q + q_qru - q_max * u_on_su_sd <= 0
+        (102) pr q + q_qru - q_max * u_on_su_sd <= 0
         '''
 
         sd_t_is_pr = numpy.reshape(self.problem.sd_is_pr == 1, newshape=(self.problem.num_sd, 1))
@@ -1763,7 +1763,7 @@ class SolutionEvaluator(object):
         
     def eval_pr_t_q_min(self):
         '''
-        pr q_min * u_on_su_sd - q + q_qrd <= 0
+        (103) pr q_min * u_on_su_sd - q + q_qrd <= 0
         '''
 
         sd_t_is_pr = numpy.reshape(self.problem.sd_is_pr == 1, newshape=(self.problem.num_sd, 1))
