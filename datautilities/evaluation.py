@@ -1929,6 +1929,7 @@ class SolutionEvaluator(object):
 
     def eval_sd_t_p_ramp_up_dn(self):
         '''
+        (64-67) in problem formulation
         '''
 
         # actual ramping (up, signed)
