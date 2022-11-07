@@ -1591,6 +1591,7 @@ def supc_not_ambiguous(data, config):
     # so as to only get the su/sd trajectories once.
     start_time = time.time()
     sd_t_supc = get_supc(data, config, check_ambiguous=True)
+    #sd_t_supc = get_supc(data, config, check_ambiguous=True, debug=True) 
     end_time = time.time()
     print('get_supc time: {}'.format(end_time - start_time))
 
@@ -1644,17 +1645,175 @@ def sd_t_cost_function_covers_sdpc(data, config):
 
 def sd_t_q_max_min_p_q_linking_supc_feasible(data, config):
 
-    pass # todo
+    num_t = len(data.time_series_input.general.interval_duration)
+    num_sd = len(data.network.simple_dispatchable_device)
+    sd_uid = [c.uid for c in data.network.simple_dispatchable_device]
+    sd_p_q_eq = [(c.q_linear_cap == 1) for c in data.network.simple_dispatchable_device]
+    sd_p_q_ineq = [(c.q_bound_cap == 1) for c in data.network.simple_dispatchable_device]
+    sd_q_0 = [(c.q_0 if c.q_linear_cap == 1 else None) for c in data.network.simple_dispatchable_device]
+    sd_q_max_0 = [(c.q_0_ub if c.q_bound_cap == 1 else None) for c in data.network.simple_dispatchable_device]
+    sd_q_min_0 = [(c.q_0_lb if c.q_bound_cap == 1 else None) for c in data.network.simple_dispatchable_device]
+    sd_beta = [(c.beta if c.q_linear_cap == 1 else None) for c in data.network.simple_dispatchable_device]
+    sd_beta_max = [(c.beta_ub if c.q_bound_cap == 1 else None) for c in data.network.simple_dispatchable_device]
+    sd_beta_min = [(c.beta_lb if c.q_bound_cap == 1 else None) for c in data.network.simple_dispatchable_device]
+    sd_ts_dict = {c.uid:c for c in data.time_series_input.simple_dispatchable_device}
+    sd_t_supc = get_supc(data, config, check_ambiguous=False)
+    sd_t_qmax = [sd_ts_dict[sd_uid[i]].q_ub for i in range(num_sd)]
+    sd_t_qmin = [sd_ts_dict[sd_uid[i]].q_lb for i in range(num_sd)]
+    idx_err_eq = [
+        (i, sd_uid[i], t, c[0], c[1])
+        for i in range(num_sd) if sd_p_q_eq[i]
+        for t in range(num_t) for c in sd_t_supc[i][t]
+        if (sd_q_0[i] + sd_beta[i] * c[1] > sd_t_qmax[i][c[0]] or
+            sd_q_0[i] + sd_beta[i] * c[1] < sd_t_qmin[i][c[0]])]
+    idx_err_ineq = [
+        (i, sd_uid[i], t, c[0], c[1])
+        for i in range(num_sd) if sd_p_q_ineq[i]
+        for t in range(num_t) for c in sd_t_supc[i][t]
+        if (sd_q_min_0[i] + sd_beta_min[i] * c[1] > sd_t_qmax[i][c[0]] or
+            sd_q_max_0[i] + sd_beta_max[i] * c[1] < sd_t_qmin[i][c[0]] or
+            sd_q_min_0[i] + sd_beta_min[i] * c[1] > sd_q_max_0[i] + sd_beta_max[i] * c[1])]
+    idx_err_eq = [
+        (i[1], i[2], i[3], i[4], sd_p_q_eq[i[0]], sd_p_q_ineq[i[0]],
+         sd_q_0[i[0]], sd_q_max_0[i[0]], sd_q_min_0[i[0]],
+         sd_beta[i[0]], sd_beta_max_0[i[0]], sd_beta_min[i[0]],
+         sd_q_0[i[0]] + sd_beta[i[0]] * i[4], sd_q_0[i[0]] + sd_beta[i[0]] * i[4],
+         sd_t_qmax[i[0]][i[3]], sd_t_qmin[i[0]][i[3]])
+        for i in idx_err_eq]
+    idx_err_ineq = [
+        (i[1], i[2], i[3], i[4], sd_p_q_eq[i[0]], sd_p_q_ineq[i[0]],
+         sd_q_0[i[0]], sd_q_max_0[i[0]], sd_q_min_0[i[0]],
+         sd_beta[i[0]], sd_beta_max[i[0]], sd_beta_min[i[0]],
+         sd_q_max_0[i[0]] + sd_beta_max[i[0]] * i[4], sd_q_min_0[i[0]] + sd_beta_min[i[0]] * i[4],
+         sd_t_qmax[i[0]][i[3]], sd_t_qmin[i[0]][i[3]])
+        for i in idx_err_ineq]
+    if len(idx_err_eq) + len(idx_err_ineq) > 0:
+        msg = 'fails startup trajectory feasible with respect to q max/min and p-q linking constraints. failures (device uid, startup interval index, infeasible interval index, trajectory p value, p_q_eq, p_q_ineq, q_0, q_max_0, q_min_0, beta, beta_max, beta_min, q_max_computed, q_min_computed, q_max bound, q_min bound): {}'.format(idx_err_eq + idx_err_ineq)
+        raise ModelError(msg)
 
 def sd_t_q_max_min_p_q_linking_sdpc_feasible(data, config):
 
-    pass # todo
+    num_t = len(data.time_series_input.general.interval_duration)
+    num_sd = len(data.network.simple_dispatchable_device)
+    sd_uid = [c.uid for c in data.network.simple_dispatchable_device]
+    sd_p_q_eq = [(c.q_linear_cap == 1) for c in data.network.simple_dispatchable_device]
+    sd_p_q_ineq = [(c.q_bound_cap == 1) for c in data.network.simple_dispatchable_device]
+    sd_q_0 = [(c.q_0 if c.q_linear_cap == 1 else None) for c in data.network.simple_dispatchable_device]
+    sd_q_max_0 = [(c.q_0_ub if c.q_bound_cap == 1 else None) for c in data.network.simple_dispatchable_device]
+    sd_q_min_0 = [(c.q_0_lb if c.q_bound_cap == 1 else None) for c in data.network.simple_dispatchable_device]
+    sd_beta = [(c.beta if c.q_linear_cap == 1 else None) for c in data.network.simple_dispatchable_device]
+    sd_beta_max = [(c.beta_ub if c.q_bound_cap == 1 else None) for c in data.network.simple_dispatchable_device]
+    sd_beta_min = [(c.beta_lb if c.q_bound_cap == 1 else None) for c in data.network.simple_dispatchable_device]
+    sd_ts_dict = {c.uid:c for c in data.time_series_input.simple_dispatchable_device}
+    sd_t_sdpc = get_sdpc(data, config, check_ambiguous=False)
+    sd_t_qmax = [sd_ts_dict[sd_uid[i]].q_ub for i in range(num_sd)]
+    sd_t_qmin = [sd_ts_dict[sd_uid[i]].q_lb for i in range(num_sd)]
+    idx_err_eq = [
+        (i, sd_uid[i], t, c[0], c[1])
+        for i in range(num_sd) if sd_p_q_eq[i]
+        for t in range(num_t) for c in sd_t_sdpc[i][t]
+        if (sd_q_0[i] + sd_beta[i] * c[1] > sd_t_qmax[i][c[0]] or
+            sd_q_0[i] + sd_beta[i] * c[1] < sd_t_qmin[i][c[0]])]
+    idx_err_ineq = [
+        (i, sd_uid[i], t, c[0], c[1])
+        for i in range(num_sd) if sd_p_q_ineq[i]
+        for t in range(num_t) for c in sd_t_sdpc[i][t]
+        if (sd_q_min_0[i] + sd_beta_min[i] * c[1] > sd_t_qmax[i][c[0]] or
+            sd_q_max_0[i] + sd_beta_max[i] * c[1] < sd_t_qmin[i][c[0]] or
+            sd_q_min_0[i] + sd_beta_min[i] * c[1] > sd_q_max_0[i] + sd_beta_max[i] * c[1])]
+    idx_err_eq = [
+        (i[1], i[2], i[3], i[4], sd_p_q_eq[i[0]], sd_p_q_ineq[i[0]],
+         sd_q_0[i[0]], sd_q_max_0[i[0]], sd_q_min_0[i[0]],
+         sd_beta[i[0]], sd_beta_max_0[i[0]], sd_beta_min[i[0]],
+         sd_q_0[i[0]] + sd_beta[i[0]] * i[4], sd_q_0[i[0]] + sd_beta[i[0]] * i[4],
+         sd_t_qmax[i[0]][i[3]], sd_t_qmin[i[0]][i[3]])
+        for i in idx_err_eq]
+    idx_err_ineq = [
+        (i[1], i[2], i[3], i[4], sd_p_q_eq[i[0]], sd_p_q_ineq[i[0]],
+         sd_q_0[i[0]], sd_q_max_0[i[0]], sd_q_min_0[i[0]],
+         sd_beta[i[0]], sd_beta_max[i[0]], sd_beta_min[i[0]],
+         sd_q_max_0[i[0]] + sd_beta_max[i[0]] * i[4], sd_q_min_0[i[0]] + sd_beta_min[i[0]] * i[4],
+         sd_t_qmax[i[0]][i[3]], sd_t_qmin[i[0]][i[3]])
+        for i in idx_err_ineq]
+    if len(idx_err_eq) + len(idx_err_ineq) > 0:
+        msg = 'fails shutdown trajectory feasible with respect to q max/min and p-q linking constraints. failures (device uid, shutdown interval index, infeasible interval index, trajectory p value, p_q_eq, p_q_ineq, q_0, q_max_0, q_min_0, beta, beta_max, beta_min, q_max_computed, q_min_computed, q_max bound, q_min bound): {}'.format(idx_err_eq + idx_err_ineq)
+        raise ModelError(msg)
 
 def sd_t_supc_sdpc_no_overlap(data, config):
+    '''
+    get su/sd trajectories
+    for each device J
+    for each interval T1 # shutdown interval
+    consider minimum downtime
+    determine earliest interval T2 > T1 # startup interval
+    such that shutting down in T1 and starting up in T2 does not violate the minimum downtime constraint
+    '''
 
-    pass # todo
+    num_t = len(data.time_series_input.general.interval_duration)
+    num_sd = len(data.network.simple_dispatchable_device)
+    sd_uid = [c.uid for c in data.network.simple_dispatchable_device]
+    sd_min_downtime = [c.down_time_lb for c in data.network.simple_dispatchable_device]
+    sd_startup_ramp = [c.p_startup_ramp_ub for c in data.network.simple_dispatchable_device]
+    sd_shutdown_ramp = [c.p_shutdown_ramp_ub for c in data.network.simple_dispatchable_device]
+    t_d = numpy.array(data.time_series_input.general.interval_duration, dtype=float)
+    t_a_end = numpy.cumsum(t_d)
+    t_a_start = numpy.zeros(shape=(num_t, ), dtype=float)
+    t_a_start[1:num_t] = t_a_end[0:(num_t - 1)]
+    supc = get_supc(data, config, check_ambiguous=False)
+    sdpc = get_sdpc(data, config, check_ambiguous=False)
 
-def get_supc(data, config, check_ambiguous=False):
+    # print('supcs:')
+    # print(supc)
+
+    # print('sdpcs:')
+    # print(sdpc)
+
+    idx_err = []
+    for i in range(num_sd):
+        for t1 in range(num_t):
+            t2 = sd_t_get_earliest_startup_after_shutdown(t1, sd_min_downtime[i], num_t, t_a_start, config)
+            if t2 is not None:
+                len_sdpc = len(sdpc[i][t1])
+                len_supc = len(supc[i][t2])
+                # t1 is the shutdown interval
+                # t1 + len_sdpc - 1 is the last interval in the shutdown trajectory
+                # t2 is the startup interval
+                # t2 - len_supc is the first interval in the startup trajectory
+                # so the trajectories overlap if and only if
+                # t1 + len_sdpc - 1 >= t2 - len_supc
+                if t1 + len_sdpc - 1 >= t2 - len_supc:
+                    idx_err.append(
+                        (sd_uid[i], t1, t2, sd_min_downtime[i], sd_shutdown_ramp[i], sd_startup_ramp[i],
+                         sdpc[i][t1], supc[i][t2]))
+    if len(idx_err) > 0:
+        msg = 'fails no overlap of shutdown and earliest subsequent startup trajectories. failures (device uid, shutdown interval, startup interval, minimum downtime, shutdown ramp rate, startup ramp rate, shutdown trajectory, startup trajectory): {}'.format(idx_err)
+        raise ModelError(msg)
+
+def sd_t_get_earliest_startup_after_shutdown(t_shutdown, min_downtime, num_t, t_a_start, config):
+    '''
+    If startup in interval T then no shutdown in intervals T' in
+    T^dn,min_jt = { T' < T : A^start_T – A^start_T' < D^dn,min }
+    I.e. given shutdown in interval T1, earliest possible startup T2 is
+    T2 = min { T2 > T1 : A^start_T2 – A^start_T1 >= D^dn,min }
+    And we use a tolerance on the time:
+    T2 = min { T2 > T1 : A^start_T2 – A^start_T1 >= D^dn,min – config['time_eq_tol'] }
+    '''
+
+    assert(t_shutdown >= 0)
+    assert(t_shutdown <= num_t - 1)
+    t_startup = t_shutdown
+    done = False
+    while not done:
+        t_startup += 1
+        if t_startup >= num_t:
+            done = True
+            t_startup = None
+        else:
+            if t_a_start[t_startup] - t_a_start[t_shutdown] >= min_downtime - config['time_eq_tol']:
+                done = True
+    return t_startup
+
+def get_supc(data, config, check_ambiguous=False, debug=False):
 
     num_t = len(data.time_series_input.general.interval_duration)
     num_sd = len(data.network.simple_dispatchable_device)
@@ -1669,6 +1828,20 @@ def get_supc(data, config, check_ambiguous=False):
     t_a_start = numpy.zeros(shape=(num_t, ), dtype=float)
     t_a_start[1:num_t] = t_a_end[0:(num_t - 1)]
 
+    if debug:
+        print('num_t: {}'.format(num_t))
+        print('t_a_end: {}'.format(t_a_end))
+        print('t_a_start: {}'.format(t_a_start))
+        for i in range(num_sd):
+            print('sd_uid: {}'.format(sd_uid[i]))
+            print('sd_t_p_min: {}'.format(sd_t_p_min[i]))
+            print('sd_p_0: {}'.format(sd_p_0[i]))
+            print('sd_p_ru_su: {}'.format(sd_p_ru_su[i]))
+            for t in [0, num_t - 1]:
+                supc = sd_t_get_supc(
+                    sd_t_p_min[i], sd_p_0[i], sd_p_ru_su[i], t, num_t, t_a_end, t_a_start, config, debug=True)
+                print('supc: {}'.format(supc))
+
     if check_ambiguous:
         sd_t_supc = [
             [sd_t_get_supc(sd_t_p_min[i], sd_p_0[i], sd_p_ru_su[i], t, num_t, t_a_end, t_a_start, config)
@@ -1682,7 +1855,7 @@ def get_supc(data, config, check_ambiguous=False):
 
     return sd_t_supc
 
-def get_sdpc(data, config, check_ambiguous=False):
+def get_sdpc(data, config, check_ambiguous=False, debug=False):
 
     num_t = len(data.time_series_input.general.interval_duration)
     num_sd = len(data.network.simple_dispatchable_device)
@@ -1697,6 +1870,20 @@ def get_sdpc(data, config, check_ambiguous=False):
     t_a_start = numpy.zeros(shape=(num_t, ), dtype=float)
     t_a_start[1:num_t] = t_a_end[0:(num_t - 1)]
 
+    if debug:
+        print('num_t: {}'.format(num_t))
+        print('t_a_end: {}'.format(t_a_end))
+        print('t_a_start: {}'.format(t_a_start))
+        for i in range(num_sd):
+            print('sd_uid: {}'.format(sd_uid[i]))
+            print('sd_t_p_min: {}'.format(sd_t_p_min[i]))
+            print('sd_p_0: {}'.format(sd_p_0[i]))
+            print('sd_p_rd_sd: {}'.format(sd_p_rd_sd[i]))
+            for t in [0, num_t - 1]:
+                sdpc = sd_t_get_sdpc(
+                    sd_t_p_min[i], sd_p_0[i], sd_p_rd_sd[i], t, num_t, t_a_end, t_a_start, config, debug=True)
+                print('sdpc: {}'.format(sdpc))
+            
     if check_ambiguous:
         sd_t_sdpc = [
             [sd_t_get_sdpc(sd_t_p_min[i], sd_p_0[i], sd_p_rd_sd[i], t, num_t, t_a_end, t_a_start, config)
@@ -1710,7 +1897,7 @@ def get_sdpc(data, config, check_ambiguous=False):
 
     return sd_t_sdpc
 
-def sd_t_get_supc(p_min, p_0, p_ru_su, t, num_t, t_a_end, t_a_start, config):
+def sd_t_get_supc(p_min, p_0, p_ru_su, t, num_t, t_a_end, t_a_start, config, debug=False):
     '''
     Get the startup trajectory for a single dispatchable device and a single startup interval
 
@@ -1753,7 +1940,7 @@ def sd_t_get_supc(p_min, p_0, p_ru_su, t, num_t, t_a_end, t_a_start, config):
         p_new = p_start - p_ru_su * (t_a_end[t] - t_a_end[t_new])
         if p_new <= config['su_sd_pc_zero_tol']:
             done = True
-            if p_new >= config['su_sd_pc_zero_tol']:
+            if p_new >= -config['su_sd_pc_zero_tol']:
                 supc_ambiguous = (t_new, p_new)
         else:
             supc.append((t_new, p_new))
@@ -1762,7 +1949,7 @@ def sd_t_get_supc(p_min, p_0, p_ru_su, t, num_t, t_a_end, t_a_start, config):
     
     return supc, supc_ambiguous # todo - check
 
-def sd_t_get_sdpc(p_min, p_0, p_rd_sd, t, num_t, t_a_end, t_a_start, config):
+def sd_t_get_sdpc(p_min, p_0, p_rd_sd, t, num_t, t_a_end, t_a_start, config, debug=False):
     '''
     Get the shutdown trajectory for a single dispatchable device and a single shutdown interval
 
@@ -1804,7 +1991,7 @@ def sd_t_get_sdpc(p_min, p_0, p_rd_sd, t, num_t, t_a_end, t_a_start, config):
         p_new = p_start - p_rd_sd * (t_a_end[t_new] - t_a_start[t])
         if p_new <= config['su_sd_pc_zero_tol']:
             done = True
-            if p_new >= config['su_sd_pc_zero_tol']:
+            if p_new >= -config['su_sd_pc_zero_tol']:
                 sdpc_ambiguous = (t_new, p_new)
         else:
             sdpc.append((t_new, p_new))
