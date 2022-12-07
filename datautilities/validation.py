@@ -9,6 +9,14 @@ from datamodel.output.data import OutputDataFile
 from datautilities import utils, arraydata, evaluation
 from datautilities.errors import ModelError, GitError
 
+# import optimization modules
+# it is OK if this fails as long as config file specifies we do not need optimization solves
+opt_solves_import_error = None
+try:
+    from datautilities.get_feas_comm import get_feas_comm
+except Exception as e:
+    opt_solves_import_error = e
+
 def write(file_name, mode, text):
 
     with open(file_name, mode) as f:
@@ -27,6 +35,17 @@ def write_json(data, file_name, sort_keys=False):
 
     with open(file_name, 'w') as f:
         json.dump(data, f, sort_keys=sort_keys)
+
+def read_config(default_config_file_name, config_file_name=None, parameters_str=None):
+
+    config = read_json(default_config_file_name)
+    if config_file_name is not None:
+        override_config = read_json(config_file_name)
+        config.update(override_config)
+    if parameters_str is not None:
+        override_config = json.loads(parameters_str)
+        config.update(override_config)
+    return config
 
 def get_p_q_linking_geometry(data, config):
 
@@ -306,7 +325,7 @@ def compute_max_min_p_from_max_min_p_q_and_linking(p_max, p_min, q_max, q_min, l
 
     # if we have not returned yet, there is a problem
 
-def scrub_data(problem_file, config_file, scrubbed_problem_file):
+def scrub_data(problem_file, default_config_file, config_file, parameters_str, scrubbed_problem_file):
     '''
     change some data in a standard way
     rewrite to a new file
@@ -323,7 +342,7 @@ def scrub_data(problem_file, config_file, scrubbed_problem_file):
     print('scrub problem data and rewrite to new file')
 
     # read config
-    config = read_json(config_file)
+    config = read_config(default_config_file, config_file, parameters_str)
 
     # data file
     print('problem data file: {}\n'.format(problem_file))
@@ -602,10 +621,10 @@ def remove_optional_fields(problem_data, config, use_pydantic=False):
         ]:
             i.pop(k, None)
 
-def check_data(problem_file, solution_file, config_file, summary_csv_file, summary_json_file, problem_errors_file, ignored_errors_file, solution_errors_file):
+def check_data(problem_file, solution_file, default_config_file, config_file, parameters_str, summary_csv_file, summary_json_file, problem_errors_file, ignored_errors_file, solution_errors_file):
 
     # read config
-    config = read_json(config_file)
+    config = read_config(default_config_file, config_file, parameters_str)
 
     # open files
     for fn in [summary_csv_file, summary_json_file, problem_errors_file, ignored_errors_file, solution_errors_file]:
@@ -707,6 +726,50 @@ def check_data(problem_file, solution_file, config_file, summary_csv_file, summa
     print('after checking problem connectedness, memory info: {}'.format(utils.get_memory_info()))
     end_time = time.time()
     print('connected time: {}'.format(end_time - start_time))
+
+    if config['do_opt_solves']:
+
+        if opt_solves_import_error is not None:
+            summary['problem']['pass'] = 0
+            write_summary(summary, summary_csv_file, summary_json_file)
+            print('model error - import error prevents running optimization checks required by config file\n')
+            #print(traceback.format_exception(opt_solves_import_error))
+            #with open(problem_errors_file, 'a') as f:
+            #    f.write(traceback.format_exception(opt_solves_import_error)) # todo - how do we get the message?
+            raise ModelError(opt_solves_import_error)
+
+        # commitment scheduling feasibility check
+        start_time = time.time()
+        try:
+            feas_comm_sched = commitment_scheduling_feasible(data_model, config)
+        except ModelError as e:
+            summary['problem']['pass'] = 0
+            write_summary(summary, summary_csv_file, summary_json_file)
+            print('model error - commitment scheduling feasibility\n')
+            with open(problem_errors_file, 'a') as f:
+                f.write(traceback.format_exc())
+            raise e
+        print('after checking commitment scheduling feasibility, memory info: {}'.format(utils.get_memory_info()))
+        end_time = time.time()
+        print('commitment scheduling feasibility time: {}'.format(end_time - start_time))
+        
+        # dispatch feasibility check under computed feasible commitment schedule
+        start_time = time.time()
+        try:
+            feas_dispatch = dispatch_feasible_given_commitment(data_model, feas_comm_sched, config)
+        except ModelError as e:
+            summary['problem']['pass'] = 0
+            write_summary(summary, summary_csv_file, summary_json_file)
+            print('model error - dispatch feasibility under computed feasible commitment schedule\n')
+            with open(problem_errors_file, 'a') as f:
+                f.write(traceback.format_exc())
+            raise e
+        print('after checking dispatch feasibility under computed feasible commitment schedule, memory info: {}'.format(utils.get_memory_info()))
+        end_time = time.time()
+        print('dispatch feasibility under computed feasible commitment schedule time: {}'.format(end_time - start_time))
+
+        # todo
+        # write prior operating point solution
 
     # summary
     problem_summary = get_summary(data_model)
@@ -995,6 +1058,7 @@ def model_checks(data, config):
         sd_t_q_max_min_p_q_linking_supc_feasible,
         sd_t_q_max_min_p_q_linking_sdpc_feasible,
         sd_t_supc_sdpc_no_overlap,
+        sd_mr_out_min_up_down_time_consistent,
         ]
     errors = []
     # try:
@@ -2048,6 +2112,62 @@ def sd_t_supc_sdpc_no_overlap(data, config):
         msg = 'fails no overlap of shutdown and earliest subsequent startup trajectories. failures (device uid, shutdown interval, startup interval, minimum downtime, shutdown ramp rate, startup ramp rate, shutdown trajectory, startup trajectory): {}'.format(idx_err)
         raise ModelError(msg)
 
+def sd_mr_out_min_up_down_time_consistent(data, config):
+
+    num_t = len(data.time_series_input.general.interval_duration)
+    num_sd = len(data.network.simple_dispatchable_device)
+    sd_uid = [c.uid for c in data.network.simple_dispatchable_device]
+    uid_ts_map = {c.uid:c for c in data.time_series_input.simple_dispatchable_device}
+    sd_t_u_max = [uid_ts_map[uid].on_status_ub for uid in sd_uid]
+    sd_t_u_min = [uid_ts_map[uid].on_status_ub for uid in sd_uid]
+    sd_init_u = [c.initial_status.on_status for c in data.network.simple_dispatchable_device]
+    sd_min_up_time = [c.in_service_time_lb for c in data.network.simple_dispatchable_device]
+    sd_min_down_time = [c.down_time_lb for c in data.network.simple_dispatchable_device]
+    sd_init_up_time = [c.initial_status.accu_up_time for c in data.network.simple_dispatchable_device]
+    sd_init_down_time = [c.initial_status.accu_down_time for c in data.network.simple_dispatchable_device]
+    t_d = [i for i in data.time_series_input.general.interval_duration]
+    sd_mr_end_t = [0 for j in range(num_sd)]
+    sd_out_end_t = [0 for j in range(num_sd)]
+    t_end_time = numpy.cumsum(t_d)
+    t_start_time = numpy.zeros(shape=(num_t, ), dtype=float)
+    t_start_time[1:num_t] = t_end_time[0:(num_t - 1)]
+
+    t_float = numpy.zeros(shape=(num_t, ), dtype=float)
+    t_int = numpy.zeros(shape=(num_t, ), dtype=int)
+
+    forced_off_before_min_uptime_viols = []
+    forced_on_before_min_downtime_viols = []
+
+    for j in range(num_sd):
+        if sd_init_up_time[j] > 0.0:
+            numpy.subtract(
+                sd_min_up_time[j] - sd_init_up_time[j] - config['time_eq_tol'],
+                t_start_time, out=t_float)
+            numpy.greater(t_float, 0.0, out=t_int)
+            t_set = numpy.nonzero(t_int)[0]
+            num_t = t_set.size
+            if num_t > 0:
+                sd_mr_end_t[j] = numpy.amax(t_set) + 1
+                t_viol = [t for t in range(sd_mr_end_t[j]) if sd_t_u_max[j][t] < 1]
+                if len(t_viol) > 0:
+                    forced_off_before_min_uptime_viols.append((sd_uid[j], max(t_viol)))
+        if sd_init_down_time[j] > 0.0:
+            numpy.subtract(
+                sd_min_down_time[j] - sd_init_down_time[j] - config['time_eq_tol'],
+                t_start_time, out=t_float)
+            numpy.greater(t_float, 0.0, out=t_int)
+            t_set = numpy.nonzero(t_int)[0]
+            num_t = t_set.size
+            if num_t > 0:
+                sd_out_end_t[j] = numpy.amax(t_set) + 1
+                t_viol = [t for t in range(sd_out_end_t[j]) if sd_t_u_min[j][t] > 0]
+                if len(t_viol) > 0:
+                    forced_on_before_min_downtime_viols.append((sd_uid[j], max(t_viol)))
+
+    if len(forced_off_before_min_uptime_viols) + len(forced_on_before_min_downtime_viols) > 0:
+        msg = "fails u max/min allows meeting min up/down time given initial status. failures (device uid, index of latest violating interval), forced off before meeting minimum uptime: {}, forced on before meeting minimum downtime: {}".format(forced_off_before_min_uptime_viols, forced_on_before_min_downtime_viols)
+        raise ModelError(msg)
+
 def sd_t_get_earliest_startup_after_shutdown(t_shutdown, min_downtime, num_t, t_a_start, config):
     '''
     If startup in interval T then no shutdown in intervals T' in
@@ -2963,6 +3083,65 @@ def connected(data, config):
     # report the errors
     if len(msg) > 0:
         raise ModelError(msg)
+
+def commitment_scheduling_feasible(data_model, config):
+    '''
+    feas_comm_sched = commitment_scheduling_feasible(data_model, config)
+    raises ModelError if infeasible
+    '''
+
+    data = {}
+    data['time_eq_tol'] = config['time_eq_tol']
+    data['t_d'] = [i for i in data_model.time_series_input.general.interval_duration]
+    data['j_uid'] = [i.uid for i in data_model.network.simple_dispatchable_device]
+    uid_ts_map = {i.uid:i for i in data_model.time_series_input.simple_dispatchable_device}
+    data['j_u_on_init'] = [i.initial_status.on_status for i in data_model.network.simple_dispatchable_device]
+    data['j_up_time_min'] = [i.in_service_time_lb for i in data_model.network.simple_dispatchable_device]
+    data['j_down_time_min'] = [i.down_time_lb for i in data_model.network.simple_dispatchable_device]
+    data['j_up_time_init'] = [i.initial_status.accu_up_time for i in data_model.network.simple_dispatchable_device]
+    data['j_down_time_init'] = [i.initial_status.accu_down_time for i in data_model.network.simple_dispatchable_device]
+    data['j_t_u_on_max'] = [uid_ts_map[i.uid].on_status_ub for i in data_model.network.simple_dispatchable_device]
+    data['j_t_u_on_min'] = [uid_ts_map[i.uid].on_status_lb for i in data_model.network.simple_dispatchable_device]
+    data['j_w_startups_max'] = [[j[2] for j in i.startups_ub] for i in data_model.network.simple_dispatchable_device]
+    data['j_w_start_time'] = [[j[0] for j in i.startups_ub] for i in data_model.network.simple_dispatchable_device]
+    data['j_w_end_time'] = [[j[1] for j in i.startups_ub] for i in data_model.network.simple_dispatchable_device]
+    sol = get_feas_comm(data)
+    if sol['success']:
+        num_viols = sum([len(v) for k,v in sol['viols'].items()])
+        if num_viols > 0:
+            #viols = {(k1,k):v for k,v in sol['viols'].items() for k1,v1 in v.items()}
+            print('commitment schedule feasibility check violations: {}'.format(sol['viols']))
+            viols = [
+                {'j': data_model.network.simple_dispatchable_device[k1[0]].uid, 'type': k, 'index': k1, 'value': v1}
+                for k,v in sol['viols'].items() for k1,v1 in v.items()]
+            j_has_viols = sorted(list(set([v['j'] for v in viols])))
+            j_viols = {j:[] for j in j_has_viols}
+            for v in viols:
+                j_viols[v['j']].append(v)
+            print('j_viols: {}'.format(j_viols))
+            msg = 'fails commitment scheduling feasible. device_violations (dict with keys in device UIDs and value[k] is the list of violations for device with UID == k): {}'.format(j_viols)
+            raise ModelError(msg)
+    else:
+        msg = 'fails commitment scheduling model solvable. model info: {}'.format(sol)
+        raise ModelError(msg)
+    # todo
+    return None
+
+def dispatch_feasible_given_commitment(data_model, feas_comm_sched, config):
+    '''
+    feas_dispatch = dispatch_feasible_given_commitment(data_model, feas_comm_sched, config)
+    raises ModelError if infeasible
+    '''
+
+    # todo
+    return None
+
+def write_pop_solution(data_model, comm_sched, dispatch, config, file_name):
+    '''
+    write_pop_solution(data_model, comm_sched, dispatch, config, file_name)
+    '''
+
+    # todo
 
 def get_buses_branches_ctgs_on_in_service_ac_network(data):
     '''
