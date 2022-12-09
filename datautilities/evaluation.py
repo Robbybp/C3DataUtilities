@@ -1655,6 +1655,7 @@ class SolutionEvaluator(object):
 
     def eval_pr_t_p_on_max(self):
         '''
+        Constraint (99) in the formulation
         pr p_on + p_rgu + p_scr + p_rru_on - p_max * u_on <= 0
         '''
 
@@ -1671,6 +1672,7 @@ class SolutionEvaluator(object):
 
     def eval_cs_t_p_on_max(self):
         '''
+        Constraint (109) in the formulation
         cs p_on + p_rgd + p_rrd_on - p_max * u_on <= 0
         '''
 
@@ -1875,6 +1877,7 @@ class SolutionEvaluator(object):
         
     def eval_cs_t_q_p_max(self):
         '''
+        # This is (115) in the problem formulation
         cs_pqae q + q_qrd - q_p0 * u_on_su_sd - beta * p <= 0
         '''
         # todo - maybe split out eq case?
@@ -1897,6 +1900,7 @@ class SolutionEvaluator(object):
         
     def eval_cs_t_q_p_min(self):
         '''
+        This is (115) in the problem formulation.
         cs_pqie -q + q_qru + q_p0 * u_on_su_sd + beta * p <= 0
         '''
         # todo - maybe split out eq case?
